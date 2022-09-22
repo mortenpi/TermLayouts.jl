@@ -2,6 +2,32 @@ module TermLayouts
 
 using Preferences
 
+const DEBUG_IO = Ref{IOStream}()
+
+function debug_open_pwd!()
+  if isassigned(DEBUG_IO) && isopen(DEBUG_IO[])
+    close(DEBUG_IO[])
+  end
+  DEBUG_IO[] = open(joinpath(pwd(), "termlayouts.log"), "w")
+end
+function close_debug!()
+  isassigned(DEBUG_IO) && isopen(DEBUG_IO[]) && close(DEBUG_IO[])
+end
+macro debugmsg(msg)
+  filename = basename(string(__source__.file))
+  lines = string(__source__.line)
+  src = "$(filename):$(lines)"
+  quote
+    if isassigned(DEBUG_IO) && isopen(DEBUG_IO[])
+      msg_string = string($(esc(msg)))
+      println(DEBUG_IO[], "DEBUG[", $src, "]: ", msg_string)
+      flush(DEBUG_IO[])
+    else
+      error("bad DEBUG_IO: $(DEBUG_IO)")
+    end
+  end
+end
+
 include("core.jl")
 include("parseANSI.jl")
 include("config.jl")
@@ -34,6 +60,11 @@ end
 
 "Activate TermLayouts, and spawn a new REPL session"
 function run()
+  debug_open_pwd!()
+  @debugmsg "hey!"
+  @debugmsg "hey!"
+  @debugmsg "hey!"
+
   state = TermLayoutsState()
   prefs = loadprefs()
 
@@ -79,15 +110,23 @@ function run()
 
   # Read output from REPL and process it asynchronously
   @async while !eof(outputpipe)
+    @debugmsg "read..."
     data = String(readavailable(outputpipe))
+    @debugmsg "read: > $(data)"
 
     # Read the output, and process it relative to the current state of the console
-    parseANSI(virtual_console, data, true)
+    try
+      parseANSI(virtual_console, data, true)
+      @debugmsg "read: parseANSI"
+    catch e
+      @debugmsg "read: parseANSI throws: $e"
+    end
     sleep(1e-2)
   end
 
   # Render the layout asynchronously
   @async while !should_exit
+    @debugmsg "render"
     # Create panels and give them default sizes
     fullh, fullw = displaysize(true_stdout)
     lpanelw = Int(round(fullw * prefs.panel1.width / 100))
@@ -143,9 +182,11 @@ function run()
   end
 
   while !should_exit
+    @debugmsg "main: enter"
     # Read in keys
     control_value = :CONTROL_VOID
     control_value = read_key(keyboard_io)
+    @debugmsg "main: control_value=$control_value"
 
     # Exit on Ctrl+C
     if control_value == :EXIT
@@ -156,6 +197,7 @@ function run()
     end
     sleep(1e-2)
   end
+  @debugmsg "main: end"
 
   # Delete line (^U) and close REPL (^D)
   write(inputpipe.in, "\x15\x04")
@@ -172,6 +214,9 @@ function run()
     close(errpipe.in)
   end
   Base.wait(t)
+
+  @debugmsg "Exiting"
+  close_debug!()
 end
 
 end
